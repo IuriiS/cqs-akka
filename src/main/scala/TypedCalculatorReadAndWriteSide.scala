@@ -1,15 +1,17 @@
 import akka.NotUsed
-import akka.actor.typed.scaladsl.{ActorContext}
+import akka.actor.typed.scaladsl.ActorContext
 import akka.actor.typed.{ActorSystem, Props, _}
 import akka.persistence.cassandra.query.scaladsl.CassandraReadJournal
 import akka.persistence.query.{EventEnvelope, PersistenceQuery}
 import akka.persistence.typed.PersistenceId
 import akka.persistence.typed.scaladsl.{Effect, EventSourcedBehavior}
-import akka.stream.scaladsl.{Source}
+import akka.stream.scaladsl.Source
 import akka.actor.typed.ActorSystem
 import akka.actor.typed.scaladsl.Behaviors
+import akka.stream.alpakka.slick.scaladsl.{Slick, SlickSession}
 import akka_typed.CalculatorRepository.{getLatestOffsetAndResult, initDataBase, updateResultAndOfsset}
 import akka_typed.TypedCalculatorWriteSide.{Add, Added, Command, Divide, Divided, Multiplied, Multiply}
+import slick.jdbc.H2Profile.api._
 
 
 case class Action(value: Int, name: String)
@@ -101,7 +103,7 @@ object akka_typed
 
   case class TypedCalculatorReadSide(system: ActorSystem[NotUsed]) {
     initDataBase
-
+    implicit val session = SlickSession.forConfig("slick-postgres")
     implicit val materializer            = system.classicSystem
     var (offset, latestCalculatedResult) = getLatestOffsetAndResult
     val startOffset: Int                 = if (offset == 1) 1 else offset + 1
@@ -141,9 +143,12 @@ object akka_typed
 
         event
     }.async
-      .runForeach { event =>
-        updateResultAndOfsset(latestCalculatedResult, event.sequenceNr)
-    }
+      .runWith(
+        Slick.sink( event => sqlu"UPDATE public.result SET calculated_value=${latestCalculatedResult}, write_side_offset=${event.sequenceNr} WHERE id= 1 "))
+
+//      .runForeach { event =>
+//        updateResultAndOfsset(latestCalculatedResult, event.sequenceNr)
+//    }
   }
 
   object CalculatorRepository {
